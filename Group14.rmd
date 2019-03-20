@@ -1,0 +1,155 @@
+---
+title: "Final Project"
+author: "Group 14"
+date: "June 20, 2018"
+output: html_document
+---
+
+```{r, warning=F}
+# Data Loading
+# load the data in to the R Studio using read.csv()
+data <- read.csv('E://Masters//Sem 3//Data Mining//Historical Product Demand.csv', header = T, stringsAsFactors = F)
+
+# Data Exploration & Visualization
+# checking the structure of the data
+str(data)
+
+# checking for any NA values associated with the data
+any(is.na(data))
+
+# which column(s) has the NA values
+colnames(data)[colSums(is.na(data)) > 0]
+
+
+library(ggplot2) # loading library ggplot2 for visualization
+
+# plotting the bar plot for product_category across warehouse
+ggplot(data, aes(Product_Category))+
+  geom_bar(stat = "Count", aes(fill = Warehouse)) +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))
+
+# plotting the bar plot for warehouse across each product_category
+ggplot(data, aes(Warehouse))+
+  geom_bar(stat = "Count", aes(fill = Product_Category))
+
+# checking the distribution of Order Demand using boxplot
+boxplot(summary(data$Order_Demand))
+
+library(sqldf) # loading library sqldf for data wrangling
+
+# subsetting the dataset for the product 1359 which is the in-demand product
+data_1359 <- sqldf('select * from data where Product_Code = "Product_1359"')
+
+# checking for any NA values for the dataset of product 1359
+any(is.na(data_1359))
+
+# Data Preparation & Pre-processing
+library(lubridate) # laoding library lubridate to handle dates
+
+# converting the date in to mdy format
+data_1359$Date <- mdy(data_1359$Date)
+
+# grouping the data as per date
+data_1359_new <- sqldf('select Date, Sum(Order_Demand) as Demand from data_1359 group by Date')
+
+# plotting a line graph for the demand
+ggplot(data_1359_new, aes(Date, Demand)) + 
+  geom_line() +
+  scale_x_date('month') +
+  ylab("Demand") +
+  xlab("") +
+  theme_classic()
+
+# loading library forecast and tseries for time series forecasting
+library('forecast')
+library('tseries')
+
+# created a time series data frame of demand using ts()
+demand_ts <- ts(data_1359_new[, c('Demand')])
+
+# cleaned the demand data using tsclean()
+data_1359_new$Clean_Demand <- tsclean(demand_ts)
+
+# plotting a time series for the clean demand data
+ggplot(data_1359_new, aes(x = Date, y = Clean_Demand)) +
+  geom_line() + 
+  scale_x_date('month') +
+  ylab("Demand") +
+  xlab("") +
+  theme_classic()
+
+# created a column for the moving average of demand with a 7 day moving average
+data_1359_new$Demand_ma <- 0
+data_1359_new$Demand_ma <- ma(data_1359_new$Clean_Demand, order = 7) 
+
+# checking the top 20 records
+head(data_1359_new,20)
+
+# function to convert NA values to 0
+c20 <- function(x) { x[is.na(x)] <- 0; x }
+
+# applying functuon to the dataset using lapply()
+data_1359_new$Demand_ma <- data.frame(lapply(data_1359_new$Demand_ma, c20))
+
+# plot to compare the actual demand and moving average demand
+ggplot(data_1359_new) +
+  geom_line(aes(x = Date, y = Clean_Demand, colour = 'Demand')) +
+  geom_line(aes(x = Date, y = Demand_ma, colour = 'Moving Average')) +
+  ylab("Order Demand") +
+  xlab("") +
+  theme_classic()
+
+# created the time series data with frequency 365 i.e one year starting from year 2012 till 2017
+tsData = ts(data_1359_new[,c(4)], frequency = 365, start = c(2012,1), end = c(2017,1))
+
+# plotting the time series data
+plot(tsData)
+
+# checking the dimension of the dataset
+dim(as.matrix(tsData))
+
+# splitting the dataset in to train and test
+# train has from year 2012 to end of 2015 year
+train <- window(tsData, start = c(2012,1), end = c(2015,365))
+
+# plotting the train
+plot(train)
+
+# test has from year 2016 to end
+test <- window(tsData, start = c(2016,1))
+
+# plotting the test
+plot(test)
+
+# created a ARIMA model using train dataset and kpss test
+arima_model <- auto.arima(train, trace = T, test = 'kpss', ic = 'aic')
+
+# model summary
+summary(arima_model)
+
+# confidence intreval of model
+confint(arima_model)
+
+# plotting the residual
+plot.ts(arima_model$residuals)
+
+# calculating residual diagnostics
+Box.test(arima_model$residuals, lag = 20, type = 'Ljung-Box')
+Box.test(arima_model$residuals^2, lag = 20, type = 'Ljung-Box')
+jarque.bera.test(arima_model$residuals)
+
+# forecasting the values
+arima_forecast <- forecast(arima_model, h = 366)
+arima_forecast
+
+# plotting the forecaasted values
+plot(arima_forecast)
+
+library(TSPred) # library for predicting time series
+plotarimapred(test, arima_model, xlim = c(2016,2017))
+
+# checking the accuracy
+accuracy(arima_forecast, test)
+
+```
+
